@@ -4,10 +4,13 @@ from urllib.parse import urljoin, urlparse
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
 import os
 import sys
 import time
 import re
+import html
 import configparser
 
 LINKS_FILE = "links.txt"   # общий файл для хранения всех найденных ссылок
@@ -17,6 +20,12 @@ VK_DOMAINS = ('vk.com', 'vk.ru', 'vkvideo.ru', 'vk.cc', 'm.vk.com')
 # Глобальные переменные для VK API (заполняются в main)
 VK_API_TOKEN = None
 VK_API_VERSION = "5.199"
+
+# Параметры вложений (значения по умолчанию, могут быть переопределены из конфига)
+ATTACH_PHOTOS = True
+PHOTO_TARGET_WIDTH = 600     # желаемая ширина фото (px)
+PHOTO_MAX_COUNT = 10         # максимум фото в одном письме
+PHOTO_MAX_KB = 500           # максимум размера одного фото (КБ)
 
 
 def detect_source_type(url):
@@ -44,6 +53,8 @@ def read_config(config_file="config.txt"):
     Интерполяция '%' отключена, чтобы URL с закодированными символами
     (например, %2C) читались без ошибок.
     """
+    global ATTACH_PHOTOS, PHOTO_TARGET_WIDTH, PHOTO_MAX_COUNT, PHOTO_MAX_KB
+
     config = configparser.ConfigParser(interpolation=None)
     try:
         config.read(config_file, encoding='utf-8')
@@ -68,6 +79,25 @@ def read_config(config_file="config.txt"):
     except ValueError:
         print("Ошибка: SMTP_PORT должен быть числом.")
         sys.exit(1)
+
+    # Дополнительные параметры вложений (необязательные)
+    attach_str = config.get('smtp', 'ATTACH_PHOTOS', fallback='yes').strip().lower()
+    ATTACH_PHOTOS = attach_str in ('yes', 'true', '1', 'on')
+
+    try:
+        PHOTO_TARGET_WIDTH = int(config.get('smtp', 'PHOTO_TARGET_WIDTH', fallback='600'))
+    except ValueError:
+        PHOTO_TARGET_WIDTH = 600
+
+    try:
+        PHOTO_MAX_COUNT = int(config.get('smtp', 'PHOTO_MAX_COUNT', fallback='10'))
+    except ValueError:
+        PHOTO_MAX_COUNT = 10
+
+    try:
+        PHOTO_MAX_KB = int(config.get('smtp', 'PHOTO_MAX_KB', fallback='500'))
+    except ValueError:
+        PHOTO_MAX_KB = 500
 
     # Общие настройки VK
     vk_default_token = None
@@ -146,10 +176,7 @@ def fetch_links_from_page(url):
 
 
 def get_vk_group_id(domain, api_token, api_version="5.199"):
-    """
-    Получает ID сообщества ВКонтакте по его короткому имени (domain).
-    Возвращает положительный ID (например, 1598048) или None.
-    """
+    """Получает ID сообщества ВКонтакте по короткому имени (domain)."""
     url = "https://api.vk.com/method/groups.getById"
     params = {
         "group_id": domain,
@@ -182,12 +209,7 @@ def get_vk_group_id(domain, api_token, api_version="5.199"):
 
 def fetch_links_from_vk_api(domain, api_token, api_version="5.199",
                             count=100, group_id=None):
-    """
-    Получает ссылки на посты сообщества через VK API (метод wall.get).
-    Для каждого поста генерируется ссылка вида https://vk.com/wall{owner_id}_{id}.
-    Дополнительно собираются ссылки из текста и вложений типа 'link',
-    но только те, что принадлежат этому же сообществу (если задан group_id).
-    """
+    """Получает ссылки на посты сообщества через VK API (метод wall.get)."""
     url = "https://api.vk.com/method/wall.get"
     params = {
         "domain": domain,
@@ -216,7 +238,6 @@ def fetch_links_from_vk_api(domain, api_token, api_version="5.199",
         owner_id = post.get("owner_id")
         post_id = post.get("id")
         if owner_id is not None and post_id is not None:
-            # Генерируем ссылку на сам пост
             post_link = f"https://vk.com/wall{owner_id}_{post_id}"
             links.add(post_link)
 
@@ -243,11 +264,25 @@ def fetch_links_from_vk_api(domain, api_token, api_version="5.199",
     return links
 
 
-def get_vk_post_text(post_url, api_token, api_version="5.199"):
+def _pick_photo_size(sizes, target_width=600):
     """
-    Получает текст поста ВКонтакте по ссылке вида https://vk.ru/wall-..._...
-    Возвращает очищенный текст (обрезанный до 200 символов) или None.
+    Выбирает размер фотографии, ближайший к target_width, но не больше
+    target_width * 1.5. Если все размеры больше — берёт самый маленький.
     """
+    valid = [s for s in sizes if s.get('width') and s.get('url')]
+    if not valid:
+        return None
+    max_allowed = int(target_width * 1.5)
+    valid.sort(key=lambda s: s['width'])
+    candidates = [s for s in valid if s['width'] <= max_allowed]
+    if candidates:
+        return min(candidates, key=lambda s: abs(s['width'] - target_width))
+    return valid[0]
+
+
+def get_vk_post_details(post_url, api_token, api_version="5.199",
+                        photo_target_width=600):
+    """Получает детальную информацию о посте ВКонтакте."""
     match = re.search(r'wall(-?\d+)_(\d+)', post_url)
     if not match:
         print(f"Не удалось извлечь owner_id/post_id из URL: {post_url}")
@@ -260,7 +295,8 @@ def get_vk_post_text(post_url, api_token, api_version="5.199"):
     params = {
         "posts": posts,
         "access_token": api_token,
-        "v": api_version
+        "v": api_version,
+        "copy_history_depth": 2
     }
     try:
         response = requests.get(url, params=params, timeout=15)
@@ -291,22 +327,73 @@ def get_vk_post_text(post_url, api_token, api_version="5.199"):
         print(f"VK API не вернул пост для {posts}. Ответ: {data}")
         return None
 
-    text = post.get("text", "")
-    if not text:
-        print(f"Пост {posts} не содержит текста.")
-        return None
+    details = {
+        'text': post.get("text", "").strip(),
+        'copy_history': [],
+        'photos': [],
+        'videos': [],
+        'docs': [],
+        'links': [],
+        'other': []
+    }
 
-    text = re.sub(r'\s+', ' ', text).strip()
-    if len(text) > 200:
-        text = text[:200] + "..."
-    return text
+    for ch in post.get("copy_history", []) or []:
+        ch_text = ch.get("text", "").strip()
+        if ch_text:
+            details['copy_history'].append(ch_text)
+        _process_vk_attachments(ch.get("attachments", []) or [], details,
+                                photo_target_width)
+
+    _process_vk_attachments(post.get("attachments", []) or [], details,
+                            photo_target_width)
+
+    return details
+
+
+def _process_vk_attachments(attachments, details, photo_target_width=600):
+    """Разбирает вложения VK и наполняет details."""
+    for att in attachments:
+        att_type = att.get("type")
+        if att_type == "photo":
+            photo = att.get("photo", {})
+            sizes = photo.get("sizes", [])
+            chosen = _pick_photo_size(sizes, photo_target_width)
+            if chosen:
+                details['photos'].append({
+                    'url': chosen['url'],
+                    'width': chosen.get('width'),
+                    'height': chosen.get('height')
+                })
+        elif att_type == "video":
+            video = att.get("video", {})
+            title = video.get("title")
+            if title:
+                details['videos'].append(title)
+        elif att_type == "doc":
+            doc = att.get("doc", {})
+            title = doc.get("title")
+            if title:
+                details['docs'].append(title)
+        elif att_type == "link":
+            link = att.get("link", {})
+            title = link.get("title") or link.get("url")
+            url = link.get("url")
+            if url:
+                details['links'].append((title, url))
+        elif att_type == "wall":
+            wall = att.get("wall", {})
+            wall_text = wall.get("text", "").strip()
+            if wall_text:
+                details['copy_history'].append(wall_text)
+            _process_vk_attachments(wall.get("attachments", []) or [], details,
+                                    photo_target_width)
+        else:
+            if att_type:
+                details['other'].append(att_type)
 
 
 def filter_links(links, patterns):
-    """
-    Применяет regex-фильтры. Ссылка остаётся, если соответствует хотя бы одному паттерну.
-    Если patterns пуст — возвращает все ссылки без изменений.
-    """
+    """Применяет regex-фильтры. Ссылка остаётся, если соответствует хотя бы одному паттерну."""
     if not patterns:
         return links
     filtered = set()
@@ -364,14 +451,72 @@ def write_new_links(filename, new_links):
     print(f"Добавлено {len(new_links)} новых ссылок в начало {filename}")
 
 
+def download_photos(photos, target_width, max_count, max_kb):
+    """Скачивает фотографии. Возвращает список вложений и словарь url->cid."""
+    attachments = []
+    url_to_cid = {}
+    max_bytes = max_kb * 1024
+
+    for idx, photo in enumerate(photos[:max_count], 1):
+        url = photo['url']
+        try:
+            resp = requests.get(url, timeout=15, headers={
+                'User-Agent': 'Mozilla/5.0 (compatible; LinkMonitor/1.0)'
+            })
+            resp.raise_for_status()
+            content = resp.content
+            size_kb = len(content) // 1024
+            if len(content) > max_bytes:
+                print(f"Фото #{idx} ({size_kb} КБ) превышает лимит {max_kb} КБ, пропускаем")
+                continue
+
+            mimetype = resp.headers.get('Content-Type', 'image/jpeg').split(';')[0].strip()
+            if not mimetype.startswith('image/'):
+                mimetype = 'image/jpeg'
+            ext = mimetype.split('/')[-1]
+            if ext == 'jpeg':
+                ext = 'jpg'
+            filename = f"photo_{idx}.{ext}"
+            cid = f"vkphoto{idx}"
+
+            attachments.append((filename, content, mimetype, cid))
+            url_to_cid[url] = cid
+            print(f"Скачано фото #{idx}: {size_kb} КБ, {mimetype}")
+        except Exception as e:
+            print(f"Не удалось скачать фото #{idx}: {e}")
+
+    return attachments, url_to_cid
+
+
 def send_email(recipient, subject, body_html,
-               smtp_server, smtp_port, smtp_user, smtp_password):
-    """Отправляет HTML-письмо через SMTP с TLS."""
-    msg = MIMEMultipart("alternative")
+               smtp_server, smtp_port, smtp_user, smtp_password,
+               attachments=None):
+    """Отправляет HTML-письмо через SMTP с TLS. attachments — список (filename, content, mimetype, cid)."""
+    if attachments:
+        msg = MIMEMultipart("related")
+    else:
+        msg = MIMEMultipart("alternative")
+
     msg["From"] = smtp_user
     msg["To"] = recipient
     msg["Subject"] = subject
     msg.attach(MIMEText(body_html, "html", "utf-8"))
+
+    for att in attachments or []:
+        try:
+            filename, content, mimetype, cid = att
+            maintype, subtype = mimetype.split('/', 1)
+            part = MIMEBase(maintype, subtype)
+            part.set_payload(content)
+            encoders.encode_base64(part)
+            if cid:
+                part.add_header('Content-ID', f'<{cid}>')
+                part.add_header('Content-Disposition', 'inline', filename=filename)
+            else:
+                part.add_header('Content-Disposition', 'attachment', filename=filename)
+            msg.attach(part)
+        except Exception as e:
+            print(f"Ошибка при прикреплении файла {att[0]}: {e}")
 
     try:
         with smtplib.SMTP(smtp_server, smtp_port) as server:
@@ -399,9 +544,12 @@ def main():
     print(f"Email получателя: {recipient}")
     print(f"SMTP сервер: {smtp_server}:{smtp_port}")
     print(f"Найдено источников: {len(sources)}")
+    print(f"Вложения фото: {'вкл' if ATTACH_PHOTOS else 'выкл'}, "
+          f"целевая ширина: {PHOTO_TARGET_WIDTH} px, "
+          f"макс. фото: {PHOTO_MAX_COUNT}, макс. размер: {PHOTO_MAX_KB} КБ")
 
     all_new_links = set()
-    link_sources = {}  # сопоставление: ссылка -> метка источника
+    link_sources = {}
 
     for src in sources:
         url = src['url']
@@ -415,7 +563,6 @@ def main():
         print(f"Тип источника: {src_type}")
         print(f"Фильтры: {filters if filters else 'не заданы (все ссылки)'}")
 
-        # Формируем метку источника для темы письма
         parsed = urlparse(url)
         source_domain = parsed.netloc.lower()
         if source_domain.startswith('www.'):
@@ -431,8 +578,7 @@ def main():
                 print(f"ID сообщества {domain}: {group_id}")
                 source_label = f"{source_domain}/club{group_id}"
             else:
-                print(f"Не удалось получить ID сообщества {domain}, "
-                      f"ссылки не будут отфильтрованы по сообществу.")
+                print(f"Не удалось получить ID сообщества {domain}.")
                 source_label = source_domain
 
             print(f"Используем VK API для сообщества: {domain} "
@@ -453,7 +599,6 @@ def main():
         filtered_links = filter_links(page_links, filters)
         print(f"После фильтрации: {len(filtered_links)}")
 
-        # Сохраняем ссылки и их источник
         for link in filtered_links:
             link_sources[link] = source_label
         all_new_links.update(filtered_links)
@@ -476,38 +621,145 @@ def main():
 
     for link in new_links:
         source_label = link_sources.get(link, '')
+        attachments = []
 
         if is_vk_post_url(link) and VK_API_TOKEN:
-            post_text = get_vk_post_text(link, VK_API_TOKEN, VK_API_VERSION)
-            if post_text:
-                base_subject = f"Новая ссылка: {post_text}"
+            details = get_vk_post_details(link, VK_API_TOKEN, VK_API_VERSION,
+                                          photo_target_width=PHOTO_TARGET_WIDTH)
+            if details:
+                # Формируем тему
+                text_for_subject = details['text']
+                if not text_for_subject and details['copy_history']:
+                    text_for_subject = details['copy_history'][0]
+                if text_for_subject:
+                    subject_text = text_for_subject[:200]
+                    if len(text_for_subject) > 200:
+                        subject_text += "..."
+                else:
+                    parts = []
+                    if details['photos']:
+                        parts.append(f"Фото: {len(details['photos'])}")
+                    if details['videos']:
+                        parts.append(f"Видео: {len(details['videos'])}")
+                    if details['docs']:
+                        parts.append(f"Документы: {len(details['docs'])}")
+                    if details['links']:
+                        parts.append(f"Ссылки: {len(details['links'])}")
+                    if details['other']:
+                        parts.append(f"Прочее: {len(details['other'])}")
+                    subject_text = ", ".join(parts) if parts else "Пост без текста"
+
+                base_subject = f"Новая ссылка: {subject_text}"
+
+                # Скачиваем фото (если включено)
+                url_to_cid = {}
+                if ATTACH_PHOTOS and details['photos']:
+                    attachments, url_to_cid = download_photos(
+                        details['photos'],
+                        target_width=PHOTO_TARGET_WIDTH,
+                        max_count=PHOTO_MAX_COUNT,
+                        max_kb=PHOTO_MAX_KB
+                    )
+
+                # Формируем HTML
+                body_parts = [
+                    '<p>Обнаружена новая ссылка:</p>',
+                    f'<p><a href="{html.escape(link, quote=True)}">'
+                    f'{html.escape(link)}</a></p>'
+                ]
+
+                content_html = ['<div style="margin-top: 15px; padding: 10px; '
+                                'border-left: 3px solid #4a90d9; background: #f9f9f9;">']
+
+                if details['text']:
+                    content_html.append(
+                        f'<p><strong>Текст поста:</strong><br>'
+                        f'{html.escape(details["text"]).replace(chr(10), "<br>")}</p>'
+                    )
+                for ch_text in details['copy_history']:
+                    content_html.append(
+                        f'<p><strong>Репост:</strong><br>'
+                        f'{html.escape(ch_text).replace(chr(10), "<br>")}</p>'
+                    )
+
+                if details['photos']:
+                    photos_block = ['<p><strong>Фото:</strong></p>']
+                    for photo in details['photos']:
+                        u = photo['url']
+                        w = photo.get('width')
+                        h = photo.get('height')
+                        dim = f" ({w}×{h})" if w and h else ""
+                        if u in url_to_cid:
+                            cid = url_to_cid[u]
+                            photos_block.append(
+                                f'<p><img src="cid:{cid}" '
+                                f'style="max-width: 100%; max-height: 600px;" '
+                                f'alt="Фото{dim}"></p>'
+                            )
+                        else:
+                            photos_block.append(
+                                f'<p><a href="{html.escape(u, quote=True)}">'
+                                f'{html.escape(u)}</a>{dim}</p>'
+                            )
+                    content_html.append("".join(photos_block))
+
+                if details['videos']:
+                    videos_text = ", ".join(html.escape(v) for v in details['videos'])
+                    content_html.append(f'<p><strong>Видео:</strong> {videos_text}</p>')
+
+                if details['docs']:
+                    docs_text = ", ".join(html.escape(d) for d in details['docs'])
+                    content_html.append(f'<p><strong>Документы:</strong> {docs_text}</p>')
+
+                if details['links']:
+                    links_text = ", ".join(
+                        f'<a href="{html.escape(u, quote=True)}">{html.escape(t)}</a>'
+                        for t, u in details['links']
+                    )
+                    content_html.append(f'<p><strong>Ссылки:</strong> {links_text}</p>')
+
+                if details['other']:
+                    other_text = ", ".join(html.escape(o) for o in details['other'])
+                    content_html.append(f'<p><strong>Прочее:</strong> {other_text}</p>')
+
+                content_html.append('</div>')
+                body_parts.append("".join(content_html))
+                body_html = "<html><body>" + "".join(body_parts) + "</body></html>"
             else:
                 title = get_page_title(link)
-                base_subject = f"Новая ссылка: {title}" if title else f"Новая ссылка: {link}"
+                subject_text = title if title else link
+                base_subject = f"Новая ссылка: {subject_text}"
+                safe_link = html.escape(link, quote=True)
+                body_html = f"""
+                <html>
+                <body>
+                    <p>Обнаружена новая ссылка:</p>
+                    <p><a href="{safe_link}">{safe_link}</a></p>
+                </body>
+                </html>
+                """
         else:
             title = get_page_title(link)
-            base_subject = f"Новая ссылка: {title}" if title else f"Новая ссылка: {link}"
+            subject_text = title if title else link
+            base_subject = f"Новая ссылка: {subject_text}"
+            safe_link = html.escape(link, quote=True)
+            body_html = f"""
+            <html>
+            <body>
+                <p>Обнаружена новая ссылка:</p>
+                <p><a href="{safe_link}">{safe_link}</a></p>
+            </body>
+            </html>
+            """
 
-        # Добавляем метку источника в тему, если она есть
         if source_label:
             subject = f"Новая ссылка ({source_label}): " + base_subject[len("Новая ссылка: "):]
         else:
             subject = base_subject
 
-        safe_link = (link.replace('&', '&amp;')
-                         .replace('<', '&lt;')
-                         .replace('>', '&gt;')
-                         .replace('"', '&quot;'))
-        body_html = f"""
-        <html>
-        <body>
-            <p>Обнаружена новая ссылка:</p>
-            <p><a href="{safe_link}">{safe_link}</a></p>
-        </body>
-        </html>
-        """
         send_email(recipient, subject, body_html,
-                   smtp_server, smtp_port, smtp_user, smtp_password)
+                   smtp_server, smtp_port, smtp_user, smtp_password,
+                   attachments=attachments)
         time.sleep(1)
 
 
