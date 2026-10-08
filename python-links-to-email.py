@@ -41,15 +41,10 @@ def is_vk_post_url(url):
 def read_config(config_file="config.txt"):
     """
     Читает конфигурационный файл в формате INI.
-    Секции:
-      [smtp]     — EMAIL, SMTP_SERVER, SMTP_PORT, SMTP_USER, SMTP_PASSWORD (обязательно)
-      [vk]       — api_token, api_version (необязательно; значения по умолчанию для VK-источников)
-      [sourceN]  — url (обязательно), filters (необязательно),
-                   type (необязательно: 'vk' или 'web'; иначе — автоопределение),
-                   api_token (необязательно), api_version (необязательно),
-                   count (необязательно; количество загружаемых постов, по умолчанию 100)
+    Интерполяция '%' отключена, чтобы URL с закодированными символами
+    (например, %2C) читались без ошибок.
     """
-    config = configparser.ConfigParser()
+    config = configparser.ConfigParser(interpolation=None)
     try:
         config.read(config_file, encoding='utf-8')
     except Exception as e:
@@ -406,6 +401,8 @@ def main():
     print(f"Найдено источников: {len(sources)}")
 
     all_new_links = set()
+    link_sources = {}  # сопоставление: ссылка -> метка источника
+
     for src in sources:
         url = src['url']
         filters = src['filters']
@@ -418,6 +415,12 @@ def main():
         print(f"Тип источника: {src_type}")
         print(f"Фильтры: {filters if filters else 'не заданы (все ссылки)'}")
 
+        # Формируем метку источника для темы письма
+        parsed = urlparse(url)
+        source_domain = parsed.netloc.lower()
+        if source_domain.startswith('www.'):
+            source_domain = source_domain[4:]
+
         if src_type == 'vk' and api_token:
             domain = url.rstrip('/').split('/')[-1]
             if domain.startswith('@'):
@@ -426,9 +429,11 @@ def main():
             group_id = get_vk_group_id(domain, api_token, api_version)
             if group_id:
                 print(f"ID сообщества {domain}: {group_id}")
+                source_label = f"{source_domain}/club{group_id}"
             else:
                 print(f"Не удалось получить ID сообщества {domain}, "
                       f"ссылки не будут отфильтрованы по сообществу.")
+                source_label = source_domain
 
             print(f"Используем VK API для сообщества: {domain} "
                   f"(v{api_version}, count={count})")
@@ -438,6 +443,7 @@ def main():
             if src_type == 'vk' and not api_token:
                 print("Для VK-источника не задан api_token, используем HTML-парсинг.")
             page_links = fetch_links_from_page(url)
+            source_label = source_domain
 
         if not page_links:
             print(f"Не удалось получить ссылки с {url}, пропускаем.")
@@ -446,6 +452,10 @@ def main():
         print(f"Получено ссылок: {len(page_links)}")
         filtered_links = filter_links(page_links, filters)
         print(f"После фильтрации: {len(filtered_links)}")
+
+        # Сохраняем ссылки и их источник
+        for link in filtered_links:
+            link_sources[link] = source_label
         all_new_links.update(filtered_links)
 
     if not all_new_links:
@@ -465,16 +475,24 @@ def main():
     write_new_links(LINKS_FILE, new_links)
 
     for link in new_links:
+        source_label = link_sources.get(link, '')
+
         if is_vk_post_url(link) and VK_API_TOKEN:
             post_text = get_vk_post_text(link, VK_API_TOKEN, VK_API_VERSION)
             if post_text:
-                subject = f"Новая ссылка: {post_text}"
+                base_subject = f"Новая ссылка: {post_text}"
             else:
                 title = get_page_title(link)
-                subject = f"Новая ссылка: {title}" if title else f"Новая ссылка: {link}"
+                base_subject = f"Новая ссылка: {title}" if title else f"Новая ссылка: {link}"
         else:
             title = get_page_title(link)
-            subject = f"Новая ссылка: {title}" if title else f"Новая ссылка: {link}"
+            base_subject = f"Новая ссылка: {title}" if title else f"Новая ссылка: {link}"
+
+        # Добавляем метку источника в тему, если она есть
+        if source_label:
+            subject = f"Новая ссылка ({source_label}): " + base_subject[len("Новая ссылка: "):]
+        else:
+            subject = base_subject
 
         safe_link = (link.replace('&', '&amp;')
                          .replace('<', '&lt;')
