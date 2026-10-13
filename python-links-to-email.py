@@ -12,6 +12,7 @@ import time
 import re
 import html
 import configparser
+from datetime import datetime
 
 LINKS_FILE = "links.txt"   # общий файл для хранения всех найденных ссылок
 
@@ -47,7 +48,7 @@ def is_vk_post_url(url):
     return bool(re.search(r'wall(-?\d+)_(\d+)', url))
 
 
-def read_config(config_file="config.txt"):
+def read_config(config_file="config.ini"):
     """
     Читает конфигурационный файл в формате INI.
     Интерполяция '%' отключена, чтобы URL с закодированными символами
@@ -425,30 +426,53 @@ def get_page_title(page_url):
 
 
 def read_existing_links(filename):
-    """Читает файл со списком ссылок и возвращает множество."""
+    """
+    Читает файл со списком ссылок и возвращает множество.
+    Строки-отметки времени (не начинающиеся с http) игнорируются.
+    """
     if not os.path.exists(filename):
         return set()
+    links = set()
     with open(filename, "r", encoding="utf-8") as f:
-        return {line.strip() for line in f if line.strip()}
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            # Отметки времени и прочие служебные строки пропускаем
+            if line.startswith("http"):
+                links.add(line)
+    return links
 
 
 def write_new_links(filename, new_links):
-    """Добавляет новые ссылки В НАЧАЛО файла, сохраняя уже существующие ниже."""
+    """
+    Добавляет новые ссылки В НАЧАЛО файла, предваряя их отметкой времени
+    в формате ГГГГ-ММ-ДД ЧЧ:ММ. Старые группы сохраняются ниже.
+    """
     if not new_links:
         return
 
+    # Читаем существующее содержимое (сохраняем как есть, включая отметки)
     existing = []
     if os.path.exists(filename):
         with open(filename, "r", encoding="utf-8") as f:
             existing = [line.rstrip('\n') for line in f if line.strip()]
 
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+
     with open(filename, "w", encoding="utf-8") as f:
+        # Отметка времени над группой ссылок
+        f.write(timestamp + "\n")
         for link in new_links:
             f.write(link + "\n")
-        for line in existing:
-            f.write(line + "\n")
+        # Разделитель между группами
+        if existing:
+            f.write("\n")
+            for line in existing:
+                f.write(line + "\n")
 
-    print(f"Добавлено {len(new_links)} новых ссылок в начало {filename}")
+    print(f"Добавлено {len(new_links)} новых ссылок в начало {filename} "
+          f"(отметка {timestamp})")
 
 
 def download_photos(photos, target_width, max_count, max_kb):
@@ -491,7 +515,7 @@ def download_photos(photos, target_width, max_count, max_kb):
 def send_email(recipient, subject, body_html,
                smtp_server, smtp_port, smtp_user, smtp_password,
                attachments=None):
-    """Отправляет HTML-письмо через SMTP с TLS. attachments — список (filename, content, mimetype, cid)."""
+    """Отправляет HTML-письмо через SMTP с TLS."""
     if attachments:
         msg = MIMEMultipart("related")
     else:
