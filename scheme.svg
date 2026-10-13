@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 820" width="1100" height="820" font-family="Arial, Helvetica, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#343a40"/>
+    </marker>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#087f5b"/>
+    </marker>
+  </defs>
+
+  <rect width="1100" height="820" fill="#f8f9fa"/>
+
+  <text x="550" y="42" text-anchor="middle" font-size="24" font-weight="bold" fill="#212529">
+    Общая схема работы скрипта мониторинга ссылок
+  </text>
+
+  <rect x="60" y="90" width="220" height="90" rx="10" fill="#e7f5ff" stroke="#1971c2" stroke-width="1.8"/>
+  <text x="170" y="122" text-anchor="middle" font-size="15" font-weight="bold" fill="#212529">config.ini</text>
+  <text x="170" y="144" text-anchor="middle" font-size="12" fill="#495057">[smtp] — почта</text>
+  <text x="170" y="162" text-anchor="middle" font-size="12" fill="#495057">[vk] — токен</text>
+
+  <rect x="380" y="90" width="240" height="90" rx="10" fill="#fff9db" stroke="#e67700" stroke-width="1.8"/>
+  <text x="500" y="122" text-anchor="middle" font-size="15" font-weight="bold" fill="#212529">Источники</text>
+  <text x="500" y="144" text-anchor="middle" font-size="12" fill="#495057">веб-сайты (HTML)</text>
+  <text x="500" y="162" text-anchor="middle" font-size="12" fill="#495057">сообщества ВКонтакте (API)</text>
+
+  <rect x="720" y="90" width="320" height="90" rx="10" fill="#f3f0ff" stroke="#7048e8" stroke-width="1.8"/>
+  <text x="880" y="122" text-anchor="middle" font-size="15" font-weight="bold" fill="#212529">Обработка в скрипте</text>
+  <text x="880" y="144" text-anchor="middle" font-size="12" fill="#495057">сбор ссылок → фильтрация (regex)</text>
+  <text x="880" y="162" text-anchor="middle" font-size="12" fill="#495057">→ сравнение с links.txt</text>
+
+  <line x1="280" y1="135" x2="380" y2="135" stroke="#343a40" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <line x1="620" y1="135" x2="720" y2="135" stroke="#343a40" stroke-width="1.8" marker-end="url(#arrow)"/>
+
+  <rect x="200" y="230" width="700" height="380" rx="14" fill="#ffffff" stroke="#adb5bd" stroke-width="1.8" stroke-dasharray="6,4"/>
+  <text x="550" y="262" text-anchor="middle" font-size="16" font-weight="bold" fill="#495057">Скрипт python-links-to-email.py</text>
+
+  <rect x="240" y="285" width="280" height="70" rx="8" fill="#e7f5ff" stroke="#1971c2" stroke-width="1.5"/>
+  <text x="380" y="315" text-anchor="middle" font-size="14" font-weight="bold" fill="#212529">Шаг 1. Чтение конфигурации</text>
+  <text x="380" y="337" text-anchor="middle" font-size="12" fill="#495057">параметры SMTP и список источников</text>
+
+  <rect x="580" y="285" width="280" height="70" rx="8" fill="#e7f5ff" stroke="#1971c2" stroke-width="1.5"/>
+  <text x="720" y="315" text-anchor="middle" font-size="14" font-weight="bold" fill="#212529">Шаг 2. Сбор ссылок</text>
+  <text x="720" y="337" text-anchor="middle" font-size="12" fill="#495057">HTML-парсинг или VK API</text>
+
+  <line x1="520" y1="320" x2="580" y2="320" stroke="#343a40" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <rect x="580" y="380" width="280" height="70" rx="8" fill="#e7f5ff" stroke="#1971c2" stroke-width="1.5"/>
+  <text x="720" y="410" text-anchor="middle" font-size="14" font-weight="bold" fill="#212529">Шаг 3. Фильтрация ссылок</text>
+  <text x="720" y="432" text-anchor="middle" font-size="12" fill="#495057">по regex-паттернам источника</text>
+
+  <line x1="720" y1="355" x2="720" y2="380" stroke="#343a40" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <rect x="240" y="380" width="280" height="70" rx="8" fill="#e7f5ff" stroke="#1971c2" stroke-width="1.5"/>
+  <text x="380" y="410" text-anchor="middle" font-size="14" font-weight="bold" fill="#212529">Шаг 4. Сравнение с links.txt</text>
+  <text x="380" y="432" text-anchor="middle" font-size="12" fill="#495057">определение новых ссылок</text>
+
+  <line x1="580" y1="415" x2="520" y2="415" stroke="#343a40" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <rect x="240" y="480" width="280" height="70" rx="8" fill="#e7f5ff" stroke="#1971c2" stroke-width="1.5"/>
+  <text x="380" y="510" text-anchor="middle" font-size="14" font-weight="bold" fill="#212529">Шаг 5. Сбор деталей поста</text>
+  <text x="380" y="532" text-anchor="middle" font-size="12" fill="#495057">текст, репосты, фото, вложения</text>
+
+  <line x1="380" y1="450" x2="380" y2="480" stroke="#343a40" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <rect x="580" y="480" width="280" height="70" rx="8" fill="#e7f5ff" stroke="#1971c2" stroke-width="1.5"/>
+  <text x="720" y="510" text-anchor="middle" font-size="14" font-weight="bold" fill="#212529">Шаг 6. Отправка письма</text>
+  <text x="720" y="532" text-anchor="middle" font-size="12" fill="#495057">HTML + встроенные фото</text>
+
+  <line x1="520" y1="515" x2="580" y2="515" stroke="#343a40" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <rect x="60" y="380" width="110" height="90" rx="10" fill="#e6fcf5" stroke="#087f5b" stroke-width="1.8"/>
+  <text x="115" y="415" text-anchor="middle" font-size="13" font-weight="bold" fill="#212529">links.txt</text>
+  <text x="115" y="435" text-anchor="middle" font-size="11" fill="#495057">история</text>
+  <text x="115" y="452" text-anchor="middle" font-size="11" fill="#495057">отметки</text>
+
+  <line x1="170" y1="415" x2="240" y2="415" stroke="#087f5b" stroke-width="1.8" marker-end="url(#arrow-green)"/>
+  <text x="205" y="405" text-anchor="middle" font-size="11" fill="#087f5b">чтение</text>
+
+  <path d="M 240 515 C 200 515, 200 470, 170 460" stroke="#087f5b" stroke-width="1.8" fill="none" marker-end="url(#arrow-green)"/>
+  <text x="205" y="500" text-anchor="middle" font-size="11" fill="#087f5b">запись</text>
+
+  <rect x="720" y="650" width="320" height="110" rx="12" fill="#e6fcf5" stroke="#087f5b" stroke-width="1.8"/>
+  <text x="880" y="684" text-anchor="middle" font-size="15" font-weight="bold" fill="#212529">Электронная почта получателя</text>
+  <text x="880" y="708" text-anchor="middle" font-size="12" fill="#495057">каждое новое уведомление — отдельным письмом</text>
+  <text x="880" y="728" text-anchor="middle" font-size="12" fill="#495057">тема: «Новая ссылка (источник): заголовок»</text>
+  <text x="880" y="748" text-anchor="middle" font-size="12" fill="#495057">тело: ссылка, текст, репосты, фото, вложения</text>
+
+  <path d="M 720 550 L 720 650" stroke="#343a40" stroke-width="1.8" fill="none" marker-end="url(#arrow)"/>
+  <text x="745" y="605" font-size="12" fill="#495057">SMTP (TLS)</text>
+
+  <rect x="60" y="650" width="620" height="110" rx="10" fill="#ffffff" stroke="#dee2e6" stroke-width="1.5"/>
+  <text x="80" y="678" font-size="14" font-weight="bold" fill="#212529">Обозначения</text>
+
+  <rect x="80" y="695" width="22" height="22" fill="#e7f5ff" stroke="#1971c2" stroke-width="1.5"/>
+  <text x="112" y="712" font-size="13" fill="#212529">Конфигурация и шаги обработки</text>
+
+  <rect x="80" y="725" width="22" height="22" fill="#fff9db" stroke="#e67700" stroke-width="1.5"/>
+  <text x="112" y="742" font-size="13" fill="#212529">Источники данных</text>
+
+  <rect x="350" y="695" width="22" height="22" fill="#e6fcf5" stroke="#087f5b" stroke-width="1.5"/>
+  <text x="382" y="712" font-size="13" fill="#212529">Хранилище и результат</text>
+
+  <rect x="350" y="725" width="22" height="22" fill="#f3f0ff" stroke="#7048e8" stroke-width="1.5"/>
+  <text x="382" y="742" font-size="13" fill="#212529">Общий блок обработки</text>
+</svg>
